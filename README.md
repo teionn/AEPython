@@ -30,7 +30,7 @@ MIT License (see [LICENSE](./LICENSE).)
 Select menu: Window -> Python
 
 The Code area is a PySide-based code editor with the following features:
-* Multi-document tabs (movable, Ctrl+W to close)
+* Multi-document tabs (movable, Ctrl+W to close, Ctrl+Tab to switch)
 * Python syntax highlighting
 * Line numbers, current line highlighting and indent guides
 * Matching brace highlighting and matching word highlighting
@@ -39,15 +39,20 @@ The Code area is a PySide-based code editor with the following features:
 * Auto indent (automatically indents after `:`)
 * Tab / Shift+Tab to indent / unindent selected lines
 * Ctrl+/ to toggle comments
-* Find and replace (Ctrl+F / Ctrl+H, F3 for find next), go to line (Ctrl+G)
-* Ctrl+Enter to execute the code (only the selection when there is one), Ctrl+Shift+Enter to execute the current line
+* Line operations: duplicate (Ctrl+D), delete (Ctrl+Shift+K), move up / down (Alt+Up / Alt+Down), select (Ctrl+L), join (Ctrl+J)
+* Find and replace (Ctrl+F / Ctrl+H, F3 for find next), go to line (Ctrl+G), go to symbol (Ctrl+Shift+O)
+* Ctrl+Enter to execute the code (only the selection when there is one), Ctrl+Shift+Enter to execute all, Ctrl+Alt+Enter to execute the current line
 * Code check: syntax errors and static analysis results (pyflakes) are shown automatically as wavy underlines and a problems list when you stop typing
 * Code outline: class / def tree view (View menu, click to jump)
-* Split-screen editing of the same script (View -> Split Editor, Ctrl+Alt+S)
-* Search across all open tabs (Ctrl+Shift+F, click a result to jump)
-* Show whitespace toggle (View -> Show Whitespace)
+* Split-screen editing of the same script (View -> Split Editor, Ctrl+Alt+S; Split Side by Side for a horizontal layout)
+* Workspace: a side panel with folder trees, double-click to open .py files (View menu)
+* Search across all open tabs (Ctrl+Shift+F) and across the workspace files (Edit -> Find in Files), click a result to jump
+* Show whitespace, word wrap, and font zoom (Ctrl+= / Ctrl+- / Ctrl+0)
+* Status bar with the cursor position and error / warning counts
+* Output menu: clear output, write output to a log file, custom output highlighting via `settings.json`
 * Auto-save on execute: tab contents are saved as a session on every execution and restored on the next startup, so unsaved code is never lost
-* Customization: change fonts, indent width, colors and shortcuts in `%APPDATA%/AEPython/settings.json`
+* File menu: New / Open (with Open Recent) / Save / Save As / Save All / Rename / Revert
+* Customization: change fonts, indent width, colors, shortcuts and output highlighting in `%APPDATA%/AEPython/settings.json`
 
 ```Python
 comp = ae.app.project.items.addComp("Comp1", 1920, 1080, 1, 10, 24)

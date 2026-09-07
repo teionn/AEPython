@@ -734,6 +734,140 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
             block = block.next()
         cursor.endEditBlock()
 
+    # ---- line operations --------------------------------------------------
+
+    def _block_range_text(self, start_block, end_block):
+        lines = []
+        block = start_block
+        while True:
+            lines.append(block.text())
+            if block == end_block:
+                break
+            block = block.next()
+        return lines
+
+    def duplicate_lines(self):
+        start_block, end_block = self._selected_blocks()
+        lines = self._block_range_text(start_block, end_block)
+
+        cursor = QtGui.QTextCursor(self.document())
+        cursor.setPosition(end_block.position() + len(end_block.text()))
+        cursor.beginEditBlock()
+        cursor.insertText("\n" + "\n".join(lines))
+        cursor.endEditBlock()
+
+    def delete_lines(self):
+        start_block, end_block = self._selected_blocks()
+
+        start = start_block.position()
+        end = min(end_block.position() + end_block.length(),
+                  self.document().characterCount() - 1)
+        if end == self.document().characterCount() - 1 and start > 0:
+            # deleting through the last line: remove the preceding newline too
+            start -= 1
+
+        cursor = QtGui.QTextCursor(self.document())
+        cursor.setPosition(start)
+        cursor.setPosition(end, QtGui.QTextCursor.KeepAnchor)
+        cursor.beginEditBlock()
+        cursor.removeSelectedText()
+        cursor.endEditBlock()
+
+    def move_lines_up(self):
+        cursor = self.textCursor()
+        start_block, end_block = self._selected_blocks()
+        previous = start_block.previous()
+        if not previous.isValid():
+            return
+
+        previous_text = previous.text()
+        lines = self._block_range_text(start_block, end_block)
+        anchor = cursor.anchor()
+        position = cursor.position()
+        shift = len(previous_text) + 1
+
+        region = QtGui.QTextCursor(self.document())
+        region.setPosition(previous.position())
+        region.setPosition(end_block.position() + len(end_block.text()),
+                           QtGui.QTextCursor.KeepAnchor)
+        region.beginEditBlock()
+        region.insertText("\n".join(lines + [previous_text]))
+        region.endEditBlock()
+
+        cursor.setPosition(anchor - shift)
+        cursor.setPosition(position - shift, QtGui.QTextCursor.KeepAnchor)
+        self.setTextCursor(cursor)
+
+    def move_lines_down(self):
+        cursor = self.textCursor()
+        start_block, end_block = self._selected_blocks()
+        following = end_block.next()
+        if not following.isValid():
+            return
+
+        following_text = following.text()
+        lines = self._block_range_text(start_block, end_block)
+        anchor = cursor.anchor()
+        position = cursor.position()
+        shift = len(following_text) + 1
+
+        region = QtGui.QTextCursor(self.document())
+        region.setPosition(start_block.position())
+        region.setPosition(following.position() + len(following_text),
+                           QtGui.QTextCursor.KeepAnchor)
+        region.beginEditBlock()
+        region.insertText("\n".join([following_text] + lines))
+        region.endEditBlock()
+
+        cursor.setPosition(anchor + shift)
+        cursor.setPosition(position + shift, QtGui.QTextCursor.KeepAnchor)
+        self.setTextCursor(cursor)
+
+    def select_lines(self):
+        start_block, end_block = self._selected_blocks()
+        cursor = self.textCursor()
+        cursor.setPosition(start_block.position())
+        cursor.setPosition(min(end_block.position() + end_block.length(),
+                               self.document().characterCount() - 1),
+                           QtGui.QTextCursor.KeepAnchor)
+        self.setTextCursor(cursor)
+
+    def join_lines(self):
+        start_block, end_block = self._selected_blocks()
+        if start_block == end_block:
+            end_block = start_block.next()
+            if not end_block.isValid():
+                return
+
+        lines = self._block_range_text(start_block, end_block)
+        joined = lines[0].rstrip()
+        for line in lines[1:]:
+            line = line.strip()
+            if line != "":
+                joined += " " + line
+
+        region = QtGui.QTextCursor(self.document())
+        region.setPosition(start_block.position())
+        region.setPosition(end_block.position() + len(end_block.text()),
+                           QtGui.QTextCursor.KeepAnchor)
+        region.beginEditBlock()
+        region.insertText(joined)
+        region.endEditBlock()
+
+    # ---- view options -----------------------------------------------------
+
+    def set_font_size(self, point_size):
+        font = self.font()
+        font.setPointSize(max(4, point_size))
+        self.setFont(font)
+        self.setTabStopDistance(
+            QtGui.QFontMetricsF(self.font()).horizontalAdvance(" ") * len(self.INDENT))
+        self.updateLineNumberAreaWidth(0)
+
+    def set_word_wrap(self, enabled):
+        self.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth if enabled
+                             else QtWidgets.QPlainTextEdit.NoWrap)
+
     # ---- auto-complete ----------------------------------------------------
 
     def _completion_prefix(self):

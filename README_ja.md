@@ -30,7 +30,7 @@ MITライセンス（[LICENSE](./LICENSE) を参照）
 Window メニュー -> Python を選択
 
 Code 欄は PySide 製のコードエディターになっており、以下の機能を利用できます。
-* マルチドキュメントタブ（並べ替え・Ctrl+W で閉じる）
+* マルチドキュメントタブ（並べ替え・Ctrl+W で閉じる・Ctrl+Tab でタブ切り替え）
 * Python シンタックスハイライト
 * 行番号表示・現在行ハイライト・インデントガイド
 * 対応括弧のハイライト・カーソル下の単語と同じ単語のハイライト
@@ -39,16 +39,20 @@ Code 欄は PySide 製のコードエディターになっており、以下の�
 * オートインデント（`:` の後で自動的に字下げ）
 * Tab / Shift+Tab で選択行の一括インデント / インデント解除
 * Ctrl+/ でコメントアウトの切り替え
-* 検索・置換（Ctrl+F / Ctrl+H、F3 で次を検索）・指定行へ移動（Ctrl+G）
-* Ctrl+Enter でコード（選択中は選択範囲のみ）を実行、Ctrl+Shift+Enter で現在行を実行
+* 行操作：行の複製（Ctrl+D）・削除（Ctrl+Shift+K）・上下移動（Alt+Up / Alt+Down）・行選択（Ctrl+L）・行結合（Ctrl+J）
+* 検索・置換（Ctrl+F / Ctrl+H、F3 で次を検索）・指定行へ移動（Ctrl+G）・シンボルへ移動（Ctrl+Shift+O）
+* Ctrl+Enter でコード（選択中は選択範囲のみ）を実行、Ctrl+Shift+Enter で全体を実行、Ctrl+Alt+Enter で現在行を実行
 * コードチェック：入力を止めると自動で構文エラーと静的解析（pyflakes）の結果を波線と問題リストに表示
 * コードアウトライン：class / def のツリー表示（View メニュー、クリックでジャンプ）
-* 分割表示：同じスクリプトを上下 2 画面で編集（View -> Split Editor、Ctrl+Alt+S）
-* 全タブ検索（Ctrl+Shift+F、結果クリックでジャンプ）
-* 空白文字の表示切り替え（View -> Show Whitespace）
+* 分割表示：同じスクリプトを 2 画面で編集（View -> Split Editor、Ctrl+Alt+S。Split Side by Side で左右分割）
+* ワークスペース：フォルダーをツリー表示し、ダブルクリックで .py を開くサイドパネル（View メニュー）
+* 全タブ検索（Ctrl+Shift+F）・ワークスペース内ファイル検索（Edit -> Find in Files）、結果クリックでジャンプ
+* 空白文字の表示切り替え・折り返し表示（Word Wrap）・フォントサイズ変更（Ctrl+= / Ctrl+- / Ctrl+0）
+* ステータスバーにカーソル位置とエラー / 警告数を表示
+* Output メニュー：出力のクリア、出力のログファイル書き出し、`settings.json` によるカスタムハイライト
 * 実行時オートセーブ：実行のたびにタブの内容をセッションとして保存し、次回起動時に復元（未保存のコードも失われません）
-* File メニューから .py ファイルの New / Open / Save / Save As
-* カスタマイズ：`%APPDATA%/AEPython/settings.json` でフォント・インデント幅・配色・ショートカットを変更可能
+* File メニューから .py ファイルの New / Open（Open Recent）/ Save / Save As / Save All / Rename / Revert
+* カスタマイズ：`%APPDATA%/AEPython/settings.json` でフォント・インデント幅・配色・ショートカット・出力ハイライトを変更可能
 
 ```Python
 comp = ae.app.project.items.addComp("Comp1", 1920, 1080, 1, 10, 24)
