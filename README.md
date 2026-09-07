@@ -30,13 +30,18 @@ MIT License (see [LICENSE](./LICENSE).)
 Select menu: Window -> Python
 
 The Code area is a PySide-based code editor with the following features:
+* Multi-document tabs (movable, Ctrl+W to close)
 * Python syntax highlighting
-* Line numbers and current line highlighting
+* Line numbers, current line highlighting and indent guides
+* Matching brace highlighting and matching word highlighting
+* Automatic closing brace / quote insertion
+* Auto-complete (keywords, builtins and words in the script)
 * Auto indent (automatically indents after `:`)
 * Tab / Shift+Tab to indent / unindent selected lines
 * Ctrl+/ to toggle comments
-* Ctrl+Enter to execute the code
-* New / Open / Save / Save As for .py files from the File menu
+* Find and replace (Ctrl+F / Ctrl+H, F3 for find next), go to line (Ctrl+G)
+* Ctrl+Enter to execute the code (only the selection when there is one), Ctrl+Shift+Enter to execute the current line
+* Auto-save on execute: tab contents are saved as a session on every execution and restored on the next startup, so unsaved code is never lost
 
 ```Python
 comp = ae.app.project.items.addComp("Comp1", 1920, 1080, 1, 10, 24)

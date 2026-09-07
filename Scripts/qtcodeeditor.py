@@ -153,12 +153,20 @@ class LineNumberArea(QtWidgets.QWidget):
 class CodeEditor(QtWidgets.QPlainTextEdit):
     INDENT = "    "
 
+    BRACKETS = {"(": ")", "[": "]", "{": "}"}
+    QUOTES = "'\""
+    MAX_WORD_HIGHLIGHTS = 200
+
     COLOR_BACKGROUND = QtGui.QColor("#2b2b2b")
     COLOR_TEXT = QtGui.QColor("#a9b7c6")
     COLOR_CURRENT_LINE = QtGui.QColor("#323232")
     COLOR_LINE_NUMBER_BACKGROUND = QtGui.QColor("#313335")
     COLOR_LINE_NUMBER = QtGui.QColor("#606366")
     COLOR_LINE_NUMBER_CURRENT = QtGui.QColor("#a4a3a3")
+    COLOR_MATCHING_WORD = QtGui.QColor("#4e5254")
+    COLOR_MATCHING_BRACE = QtGui.QColor("#36587f")
+    COLOR_UNMATCHED_BRACE = QtGui.QColor("#6e2b28")
+    COLOR_INDENT_GUIDE = QtGui.QColor(255, 255, 255, 25)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -182,10 +190,18 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
         self.lineNumberArea = LineNumberArea(self)
         self.blockCountChanged.connect(self.updateLineNumberAreaWidth)
         self.updateRequest.connect(self.updateLineNumberArea)
-        self.cursorPositionChanged.connect(self.highlightCurrentLine)
+        self.cursorPositionChanged.connect(self.updateExtraSelections)
+
+        self._completer = QtWidgets.QCompleter(self)
+        self._completer.setWidget(self)
+        self._completer.setCompletionMode(QtWidgets.QCompleter.PopupCompletion)
+        self._completer.setCaseSensitivity(QtCore.Qt.CaseInsensitive)
+        self._completer_model = QtCore.QStringListModel(self._completer)
+        self._completer.setModel(self._completer_model)
+        self._completer.activated.connect(self._insert_completion)
 
         self.updateLineNumberAreaWidth(0)
-        self.highlightCurrentLine()
+        self.updateExtraSelections()
 
     # ---- line number area -------------------------------------------------
 
@@ -236,8 +252,44 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
             bottom = top + round(self.blockBoundingRect(block).height())
             block_number += 1
 
-    def highlightCurrentLine(self):
+    # ---- indent guides ----------------------------------------------------
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        painter = QtGui.QPainter(self.viewport())
+        painter.setPen(self.COLOR_INDENT_GUIDE)
+
+        space_width = self.fontMetrics().horizontalAdvance(" ")
+        left = self.contentOffset().x() + self.document().documentMargin()
+
+        block = self.firstVisibleBlock()
+        top = round(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
+        previous_levels = 0
+
+        while block.isValid() and top <= event.rect().bottom():
+            bottom = top + round(self.blockBoundingRect(block).height())
+            text = block.text()
+            if text.strip() != "":
+                indent = len(text) - len(text.lstrip(" "))
+                levels = indent // len(self.INDENT)
+                previous_levels = levels
+            else:
+                levels = previous_levels
+
+            if block.isVisible() and bottom >= event.rect().top():
+                for level in range(1, levels):
+                    x = round(left + space_width * len(self.INDENT) * level)
+                    painter.drawLine(x, top, x, bottom)
+
+            block = block.next()
+            top = bottom
+
+    # ---- extra selections (current line / braces / matching words) --------
+
+    def updateExtraSelections(self):
         selections = []
+
         if not self.isReadOnly():
             selection = QtWidgets.QTextEdit.ExtraSelection()
             selection.format.setBackground(self.COLOR_CURRENT_LINE)
@@ -245,12 +297,99 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
             selection.cursor = self.textCursor()
             selection.cursor.clearSelection()
             selections.append(selection)
+
+        selections += self._matching_word_selections()
+        selections += self._brace_selections()
+
         self.setExtraSelections(selections)
         self.lineNumberArea.update()
 
-    # ---- editing helpers --------------------------------------------------
+    def _make_range_selection(self, start, end, color):
+        selection = QtWidgets.QTextEdit.ExtraSelection()
+        selection.format.setBackground(color)
+        cursor = QtGui.QTextCursor(self.document())
+        cursor.setPosition(start)
+        cursor.setPosition(end, QtGui.QTextCursor.KeepAnchor)
+        selection.cursor = cursor
+        return selection
+
+    def _matching_word_selections(self):
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            word = cursor.selectedText()
+        else:
+            word_cursor = QtGui.QTextCursor(cursor)
+            word_cursor.select(QtGui.QTextCursor.WordUnderCursor)
+            word = word_cursor.selectedText()
+
+        if len(word) < 2 or re.fullmatch(r"[A-Za-z_]\w*", word) is None:
+            return []
+
+        matches = re.finditer(r"\b%s\b" % re.escape(word), self.toPlainText())
+        matches = [m for _, m in zip(range(self.MAX_WORD_HIGHLIGHTS + 1), matches)]
+        if len(matches) < 2 or len(matches) > self.MAX_WORD_HIGHLIGHTS:
+            return []
+
+        return [self._make_range_selection(m.start(), m.end(), self.COLOR_MATCHING_WORD)
+                for m in matches]
+
+    def _brace_selections(self):
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            return []
+
+        text = self.toPlainText()
+        pos = cursor.position()
+
+        index = None
+        if pos > 0 and text[pos - 1] in "()[]{}":
+            index = pos - 1
+        elif pos < len(text) and text[pos] in "()[]{}":
+            index = pos
+        if index is None:
+            return []
+
+        match = self._find_matching_brace(text, index)
+        if match is None:
+            return [self._make_range_selection(index, index + 1, self.COLOR_UNMATCHED_BRACE)]
+        return [self._make_range_selection(index, index + 1, self.COLOR_MATCHING_BRACE),
+                self._make_range_selection(match, match + 1, self.COLOR_MATCHING_BRACE)]
+
+    @staticmethod
+    def _find_matching_brace(text, index):
+        char = text[index]
+        pairs = {"(": ")", "[": "]", "{": "}", ")": "(", "]": "[", "}": "{"}
+        other = pairs[char]
+        step = 1 if char in "([{" else -1
+
+        depth = 0
+        i = index + step
+        while 0 <= i < len(text):
+            c = text[i]
+            if c == char:
+                depth += 1
+            elif c == other:
+                if depth == 0:
+                    return i
+                depth -= 1
+            i += step
+        return None
+
+    # ---- key handling -----------------------------------------------------
 
     def keyPressEvent(self, event):
+        if self._completer.popup().isVisible() and event.key() in (
+                QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Tab,
+                QtCore.Qt.Key_Backtab, QtCore.Qt.Key_Escape):
+            event.ignore()
+            return
+
+        if not self._handle_editing_keys(event) and not self._handle_auto_close(event):
+            super().keyPressEvent(event)
+
+        self._update_completion(event)
+
+    def _handle_editing_keys(self, event):
         key = event.key()
         modifiers = event.modifiers()
 
@@ -259,22 +398,85 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
                 self._indent_selection()
             else:
                 self._insert_indent()
-            return
+            return True
         if key == QtCore.Qt.Key_Backtab:
             self._unindent_selection()
-            return
+            return True
         if key in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter) and modifiers in (
                 QtCore.Qt.NoModifier, QtCore.Qt.KeypadModifier):
             self._insert_newline_with_indent()
-            return
+            return True
         if key == QtCore.Qt.Key_Backspace and modifiers == QtCore.Qt.NoModifier:
+            if self._backspace_delete_pair():
+                return True
             if self._backspace_unindent():
-                return
+                return True
         if key == QtCore.Qt.Key_Slash and modifiers == QtCore.Qt.ControlModifier:
-            self._toggle_comment()
-            return
+            self.toggle_comment()
+            return True
+        return False
 
-        super().keyPressEvent(event)
+    def _neighbor_chars(self):
+        cursor = self.textCursor()
+        text = cursor.block().text()
+        column = cursor.positionInBlock()
+        previous_char = text[column - 1] if column > 0 else ""
+        next_char = text[column] if column < len(text) else ""
+        return previous_char, next_char
+
+    def _handle_auto_close(self, event):
+        text = event.text()
+        if text == "" or text not in "([{)]}\"'":
+            return False
+
+        cursor = self.textCursor()
+
+        if cursor.hasSelection() and (text in self.BRACKETS or text in self.QUOTES):
+            selected = cursor.selectedText()
+            closing = self.BRACKETS.get(text, text)
+            cursor.insertText(text + selected + closing)
+            return True
+
+        previous_char, next_char = self._neighbor_chars()
+
+        if text in ")]}" or text in self.QUOTES:
+            if next_char == text:
+                cursor.movePosition(QtGui.QTextCursor.Right)
+                self.setTextCursor(cursor)
+                return True
+
+        pair_allowed = next_char == "" or next_char in " \t)]},:;"
+
+        if text in self.BRACKETS and pair_allowed:
+            cursor.insertText(text + self.BRACKETS[text])
+            cursor.movePosition(QtGui.QTextCursor.Left)
+            self.setTextCursor(cursor)
+            return True
+
+        # do not pair when completing a triple quote
+        if text in self.QUOTES and pair_allowed and previous_char != text:
+            cursor.insertText(text + text)
+            cursor.movePosition(QtGui.QTextCursor.Left)
+            self.setTextCursor(cursor)
+            return True
+
+        return False
+
+    def _backspace_delete_pair(self):
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            return False
+
+        previous_char, next_char = self._neighbor_chars()
+        is_pair = (self.BRACKETS.get(previous_char) == next_char or
+                   (previous_char in self.QUOTES and previous_char == next_char))
+        if not is_pair:
+            return False
+
+        cursor.movePosition(QtGui.QTextCursor.Left)
+        cursor.movePosition(QtGui.QTextCursor.Right, QtGui.QTextCursor.KeepAnchor, 2)
+        cursor.removeSelectedText()
+        return True
 
     def _selected_blocks(self):
         cursor = self.textCursor()
@@ -356,7 +558,7 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
             block = block.next()
         cursor.endEditBlock()
 
-    def _toggle_comment(self):
+    def toggle_comment(self):
         start_block, end_block = self._selected_blocks()
 
         # comment out only when there is a non-empty line not yet commented
@@ -394,3 +596,42 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
                 break
             block = block.next()
         cursor.endEditBlock()
+
+    # ---- auto-complete ----------------------------------------------------
+
+    def _completion_prefix(self):
+        cursor = self.textCursor()
+        text_before = cursor.block().text()[:cursor.positionInBlock()]
+        match = re.search(r"[A-Za-z_]\w*$", text_before)
+        return "" if match is None else match.group(0)
+
+    def _update_completion(self, event):
+        popup = self._completer.popup()
+        prefix = self._completion_prefix()
+
+        if event.text() == "" or len(prefix) < 2:
+            popup.hide()
+            return
+
+        words = set(PythonHighlighter.KEYWORDS) | set(PythonHighlighter.BUILTINS)
+        words |= set(re.findall(r"[A-Za-z_]\w{2,}", self.toPlainText()))
+        words.discard(prefix)
+        self._completer_model.setStringList(sorted(words))
+
+        self._completer.setCompletionPrefix(prefix)
+        if self._completer.completionCount() == 0:
+            popup.hide()
+            return
+
+        popup.setCurrentIndex(self._completer.completionModel().index(0, 0))
+        rect = self.cursorRect()
+        rect.setWidth(popup.sizeHintForColumn(0) + popup.verticalScrollBar().sizeHint().width())
+        self._completer.complete(rect)
+
+    def _insert_completion(self, completion):
+        cursor = self.textCursor()
+        prefix = self._completion_prefix()
+        if prefix != "":
+            cursor.movePosition(QtGui.QTextCursor.Left, QtGui.QTextCursor.KeepAnchor, len(prefix))
+        cursor.insertText(completion)
+        self.setTextCursor(cursor)
