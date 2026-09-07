@@ -9,6 +9,7 @@ After Effects 内部用 Python プラグイン
   * クラス・関数リファレンス： https://ae-scripting.docsforadobe.dev/introduction/overview.html
 * Javascript <--> Python の相互連携
 * Qt ([PySide2](https://pypi.org/project/PySide2/)) による GUI開発
+* コードエディター標準搭載（シンタックスハイライト・行番号・オートインデント）
 
 ## 動作環境
 * Adobe After Effects CS6 / CC~
@@ -27,6 +28,15 @@ MITライセンス（[LICENSE](./LICENSE) を参照）
 
 ### Python Window から Python スクリプトを実行
 Window メニュー -> Python を選択
+
+Code 欄は PySide 製のコードエディターになっており、以下の機能を利用できます。
+* Python シンタックスハイライト
+* 行番号表示・現在行ハイライト
+* オートインデント（`:` の後で自動的に字下げ）
+* Tab / Shift+Tab で選択行の一括インデント / インデント解除
+* Ctrl+/ でコメントアウトの切り替え
+* Ctrl+Enter でコードを実行
+* File メニューから .py ファイルの New / Open / Save / Save As
 
 ```Python
 comp = ae.app.project.items.addComp("Comp1", 1920, 1080, 1, 10, 24)

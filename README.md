@@ -9,6 +9,7 @@ Python scripting plugin for After Effects
   * Class and function reference: https://ae-scripting.docsforadobe.dev/introduction/overview.html
 * Interoperation between Javascript and Python
 * GUI development by Qt ([PySide2](https://pypi.org/project/PySide2/))
+* Built-in code editor (syntax highlighting, line numbers, auto indent)
 
 ## System Requirements
 * Adobe After Effects CS6 / CC~
@@ -27,6 +28,15 @@ MIT License (see [LICENSE](./LICENSE).)
 
 ### Run Python scripts from the Python Window
 Select menu: Window -> Python
+
+The Code area is a PySide-based code editor with the following features:
+* Python syntax highlighting
+* Line numbers and current line highlighting
+* Auto indent (automatically indents after `:`)
+* Tab / Shift+Tab to indent / unindent selected lines
+* Ctrl+/ to toggle comments
+* Ctrl+Enter to execute the code
+* New / Open / Save / Save As for .py files from the File menu
 
 ```Python
 comp = ae.app.project.items.addComp("Comp1", 1920, 1080, 1, 10, 24)
