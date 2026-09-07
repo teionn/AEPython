@@ -193,6 +193,100 @@ class PythonHighlighter(QtGui.QSyntaxHighlighter):
         return len(text)
 
 
+class JavaScriptHighlighter(QtGui.QSyntaxHighlighter):
+    """Highlighter for ExtendScript / JSX (ES3-style JavaScript)."""
+
+    KEYWORDS = [
+        "break", "case", "catch", "continue", "default", "delete", "do",
+        "else", "false", "finally", "for", "function", "if", "in",
+        "instanceof", "new", "null", "return", "switch", "this", "throw",
+        "true", "try", "typeof", "undefined", "var", "void", "while", "with"
+    ]
+
+    BUILTINS = [
+        "app", "alert", "confirm", "prompt", "writeLn", "$",
+        "Array", "Boolean", "Date", "File", "Folder", "Function", "Math",
+        "Number", "Object", "RegExp", "String", "parseInt", "parseFloat",
+        "isNaN", "eval", "JSON"
+    ]
+
+    STATE_NONE = 0
+    STATE_BLOCK_COMMENT = 3
+
+    def __init__(self, document, colors=None):
+        super().__init__(document)
+
+        c = dict(PythonHighlighter.DEFAULT_COLORS)
+        c.update(colors or {})
+
+        self.format_keyword = _format(c["keyword"], bold=True)
+        self.format_builtin = _format(c["builtin"])
+        self.format_string = _format(c["string"])
+        self.format_comment = _format(c["comment"], italic=True)
+        self.format_number = _format(c["number"])
+        self.format_definition = _format(c["definition"])
+        self.format_self = _format(c["self"])
+
+        self.rules = [
+            (re.compile(r"\b(?:%s)\b" % "|".join(self.KEYWORDS)), self.format_keyword),
+            (re.compile(r"\b(?:%s)\b" % "|".join(re.escape(b) if b != "$" else r"\$"
+                                                 for b in self.BUILTINS)), self.format_builtin),
+            (re.compile(r"(?<=\bfunction\s)\s*\w+"), self.format_definition),
+            (re.compile(r"\b0[xX][0-9a-fA-F]+\b|"
+                        r"\b\d+(?:\.\d*)?(?:[eE][+-]?\d+)?\b|\.\d+(?:[eE][+-]?\d+)?\b"),
+             self.format_number),
+        ]
+
+    def highlightBlock(self, text):
+        self.setCurrentBlockState(self.STATE_NONE)
+
+        protected = []
+        pos = 0
+
+        if self.previousBlockState() == self.STATE_BLOCK_COMMENT:
+            end = text.find("*/")
+            if end == -1:
+                self.setFormat(0, len(text), self.format_comment)
+                self.setCurrentBlockState(self.STATE_BLOCK_COMMENT)
+                return
+            self.setFormat(0, end + 2, self.format_comment)
+            protected.append((0, end + 2))
+            pos = end + 2
+
+        i = pos
+        length = len(text)
+        while i < length:
+            if text.startswith("//", i):
+                self.setFormat(i, length - i, self.format_comment)
+                protected.append((i, length))
+                break
+            elif text.startswith("/*", i):
+                end = text.find("*/", i + 2)
+                if end == -1:
+                    self.setFormat(i, length - i, self.format_comment)
+                    protected.append((i, length))
+                    self.setCurrentBlockState(self.STATE_BLOCK_COMMENT)
+                    break
+                self.setFormat(i, end + 2 - i, self.format_comment)
+                protected.append((i, end + 2))
+                i = end + 2
+            elif text[i] in "'\"":
+                end = PythonHighlighter._find_string_end(text, i, text[i])
+                self.setFormat(i, end - i, self.format_string)
+                protected.append((i, end))
+                i = end
+            else:
+                i += 1
+
+        def is_protected(index):
+            return any(s <= index < e for s, e in protected)
+
+        for pattern, fmt in self.rules:
+            for match in pattern.finditer(text):
+                if not is_protected(match.start()):
+                    self.setFormat(match.start(), match.end() - match.start(), fmt)
+
+
 class LineNumberArea(QtWidgets.QWidget):
     def __init__(self, editor):
         super().__init__(editor)
@@ -245,8 +339,13 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
     lintUpdated = QtCore.Signal(list)
     gotFocus = QtCore.Signal()
 
-    def __init__(self, parent=None, settings=None, document=None, lint=True):
+    def __init__(self, parent=None, settings=None, document=None, lint=True,
+                 language="python"):
         super().__init__(parent)
+
+        self.language = language
+        self.comment_token = "#" if language == "python" else "//"
+        self._indent_trigger = ":" if language == "python" else "{"
 
         settings = settings or {}
         colors = settings.get("colors", {})
@@ -275,7 +374,9 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
 
         # one highlighter per document, even when shared by split views
         if getattr(self.document(), "_aepython_highlighter", None) is None:
-            self.document()._aepython_highlighter = PythonHighlighter(self.document(), colors)
+            highlighter_class = (PythonHighlighter if language == "python"
+                                 else JavaScriptHighlighter)
+            self.document()._aepython_highlighter = highlighter_class(self.document(), colors)
         self.highlighter = self.document()._aepython_highlighter
 
         self.lineNumberArea = LineNumberArea(self)
@@ -392,7 +493,8 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
     # ---- code check (lint) ------------------------------------------------
 
     def run_lint(self):
-        self.lint_results = check_code(self.toPlainText())
+        # the code check only understands Python
+        self.lint_results = check_code(self.toPlainText()) if self.language == "python" else []
         self._lint_selections = []
 
         for result in self.lint_results:
@@ -637,7 +739,7 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
         cursor = self.textCursor()
         text_before = cursor.block().text()[:cursor.positionInBlock()]
         indent = re.match(r"[ \t]*", text_before).group(0)
-        if text_before.rstrip().endswith(":"):
+        if text_before.rstrip().endswith(self._indent_trigger):
             indent += self.INDENT
         cursor.insertText("\n" + indent)
         self.ensureCursorVisible()
@@ -696,6 +798,7 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
         cursor.endEditBlock()
 
     def toggle_comment(self):
+        token = self.comment_token
         start_block, end_block = self._selected_blocks()
 
         # comment out only when there is a non-empty line not yet commented
@@ -703,7 +806,7 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
         block = start_block
         while True:
             text = block.text()
-            if text.strip() != "" and not text.lstrip().startswith("#"):
+            if text.strip() != "" and not text.lstrip().startswith(token):
                 add_comment = True
                 break
             if block == end_block:
@@ -718,12 +821,12 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
             block_cursor = QtGui.QTextCursor(block)
             if add_comment:
                 if text.strip() != "":
-                    block_cursor.insertText("# ")
+                    block_cursor.insertText(token + " ")
             else:
                 stripped = text.lstrip()
-                if stripped.startswith("#"):
+                if stripped.startswith(token):
                     indent_len = len(text) - len(stripped)
-                    remove = 2 if stripped.startswith("# ") else 1
+                    remove = len(token) + 1 if stripped.startswith(token + " ") else len(token)
                     block_cursor.movePosition(QtGui.QTextCursor.Right,
                                               QtGui.QTextCursor.MoveAnchor, indent_len)
                     block_cursor.movePosition(QtGui.QTextCursor.Right,
@@ -884,7 +987,10 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
             popup.hide()
             return
 
-        words = set(PythonHighlighter.KEYWORDS) | set(PythonHighlighter.BUILTINS)
+        if self.language == "python":
+            words = set(PythonHighlighter.KEYWORDS) | set(PythonHighlighter.BUILTINS)
+        else:
+            words = set(JavaScriptHighlighter.KEYWORDS) | set(JavaScriptHighlighter.BUILTINS)
         words |= set(re.findall(r"[A-Za-z_]\w{2,}", self.toPlainText()))
         words.discard(prefix)
         self._completer_model.setStringList(sorted(words))

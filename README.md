@@ -30,8 +30,9 @@ MIT License (see [LICENSE](./LICENSE).)
 Select menu: Window -> Python
 
 The Code area is a PySide-based code editor with the following features:
+* Python and JSX (ExtendScript) support: each tab has a language, detected automatically when opening .jsx / .js files. Create a JSX tab from File -> New JSX Tab (Ctrl+Shift+N) and execute it with the same shortcuts (results are shown in the Output). File -> Execute JSX File runs a .jsx file directly
 * Multi-document tabs (movable, Ctrl+W to close, Ctrl+Tab to switch)
-* Python syntax highlighting
+* Python / JSX syntax highlighting (comment toggling and auto indent also follow the language)
 * Line numbers, current line highlighting and indent guides
 * Matching brace highlighting and matching word highlighting
 * Automatic closing brace / quote insertion
