@@ -41,8 +41,14 @@ Code 欄は PySide 製のコードエディターになっており、以下の�
 * Ctrl+/ でコメントアウトの切り替え
 * 検索・置換（Ctrl+F / Ctrl+H、F3 で次を検索）・指定行へ移動（Ctrl+G）
 * Ctrl+Enter でコード（選択中は選択範囲のみ）を実行、Ctrl+Shift+Enter で現在行を実行
+* コードチェック：入力を止めると自動で構文エラーと静的解析（pyflakes）の結果を波線と問題リストに表示
+* コードアウトライン：class / def のツリー表示（View メニュー、クリックでジャンプ）
+* 分割表示：同じスクリプトを上下 2 画面で編集（View -> Split Editor、Ctrl+Alt+S）
+* 全タブ検索（Ctrl+Shift+F、結果クリックでジャンプ）
+* 空白文字の表示切り替え（View -> Show Whitespace）
 * 実行時オートセーブ：実行のたびにタブの内容をセッションとして保存し、次回起動時に復元（未保存のコードも失われません）
 * File メニューから .py ファイルの New / Open / Save / Save As
+* カスタマイズ：`%APPDATA%/AEPython/settings.json` でフォント・インデント幅・配色・ショートカットを変更可能
 
 ```Python
 comp = ae.app.project.items.addComp("Comp1", 1920, 1080, 1, 10, 24)

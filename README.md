@@ -41,7 +41,13 @@ The Code area is a PySide-based code editor with the following features:
 * Ctrl+/ to toggle comments
 * Find and replace (Ctrl+F / Ctrl+H, F3 for find next), go to line (Ctrl+G)
 * Ctrl+Enter to execute the code (only the selection when there is one), Ctrl+Shift+Enter to execute the current line
+* Code check: syntax errors and static analysis results (pyflakes) are shown automatically as wavy underlines and a problems list when you stop typing
+* Code outline: class / def tree view (View menu, click to jump)
+* Split-screen editing of the same script (View -> Split Editor, Ctrl+Alt+S)
+* Search across all open tabs (Ctrl+Shift+F, click a result to jump)
+* Show whitespace toggle (View -> Show Whitespace)
 * Auto-save on execute: tab contents are saved as a session on every execution and restored on the next startup, so unsaved code is never lost
+* Customization: change fonts, indent width, colors and shortcuts in `%APPDATA%/AEPython/settings.json`
 
 ```Python
 comp = ae.app.project.items.addComp("Comp1", 1920, 1080, 1, 10, 24)

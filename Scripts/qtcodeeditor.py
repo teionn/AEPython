@@ -13,6 +13,47 @@ def _format(color, bold=False, italic=False):
     return fmt
 
 
+def check_code(text):
+    """Check Python code and return a list of problems:
+    [{"line": int (1-based), "col": int (0-based), "message": str, "kind": "error"|"warning"}]
+    Syntax errors are always detected; static analysis runs when pyflakes is installed."""
+    try:
+        compile(text, "<code>", "exec")
+    except SyntaxError as e:
+        return [{"line": e.lineno or 1, "col": max((e.offset or 1) - 1, 0),
+                 "message": f"SyntaxError: {e.msg}", "kind": "error"}]
+    except (ValueError, TypeError, RecursionError) as e:
+        return [{"line": 1, "col": 0, "message": str(e), "kind": "error"}]
+
+    try:
+        from pyflakes.api import check as pyflakes_check
+    except ImportError:
+        return []
+
+    class Reporter:
+        def __init__(self):
+            self.results = []
+
+        def unexpectedError(self, filename, msg):
+            pass
+
+        def syntaxError(self, filename, msg, lineno, offset, text):
+            self.results.append({"line": lineno or 1, "col": max((offset or 1) - 1, 0),
+                                 "message": f"SyntaxError: {msg}", "kind": "error"})
+
+        def flake(self, message):
+            self.results.append({"line": message.lineno, "col": getattr(message, "col", 0),
+                                 "message": message.message % message.message_args,
+                                 "kind": "warning"})
+
+    reporter = Reporter()
+    try:
+        pyflakes_check(text, "<code>", reporter)
+    except Exception:
+        return []
+    return reporter.results
+
+
 class PythonHighlighter(QtGui.QSyntaxHighlighter):
     KEYWORDS = [
         "False", "None", "True", "and", "as", "assert", "async", "await",
@@ -33,22 +74,36 @@ class PythonHighlighter(QtGui.QSyntaxHighlighter):
         "type", "vars", "zip", "__import__"
     ]
 
+    DEFAULT_COLORS = {
+        "keyword": "#cc7832",
+        "builtin": "#8ab1d0",
+        "string": "#6a8759",
+        "comment": "#808080",
+        "number": "#6897bb",
+        "decorator": "#bbb529",
+        "definition": "#ffc66b",
+        "self": "#94558d",
+    }
+
     # block states for unterminated triple-quoted strings
     STATE_NONE = 0
     STATE_TRIPLE_SINGLE = 1
     STATE_TRIPLE_DOUBLE = 2
 
-    def __init__(self, document):
+    def __init__(self, document, colors=None):
         super().__init__(document)
 
-        self.format_keyword = _format("#cc7832", bold=True)
-        self.format_builtin = _format("#8ab1d0")
-        self.format_string = _format("#6a8759")
-        self.format_comment = _format("#808080", italic=True)
-        self.format_number = _format("#6897bb")
-        self.format_decorator = _format("#bbb529")
-        self.format_definition = _format("#ffc66b")
-        self.format_self = _format("#94558d")
+        c = dict(self.DEFAULT_COLORS)
+        c.update(colors or {})
+
+        self.format_keyword = _format(c["keyword"], bold=True)
+        self.format_builtin = _format(c["builtin"])
+        self.format_string = _format(c["string"])
+        self.format_comment = _format(c["comment"], italic=True)
+        self.format_number = _format(c["number"])
+        self.format_decorator = _format(c["decorator"])
+        self.format_definition = _format(c["definition"])
+        self.format_self = _format(c["self"])
 
         self.rules = [
             (re.compile(r"\b(?:%s)\b" % "|".join(self.KEYWORDS)), self.format_keyword),
@@ -156,6 +211,7 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
     BRACKETS = {"(": ")", "[": "]", "{": "}"}
     QUOTES = "'\""
     MAX_WORD_HIGHLIGHTS = 200
+    LINT_INTERVAL_MS = 800
 
     COLOR_BACKGROUND = QtGui.QColor("#2b2b2b")
     COLOR_TEXT = QtGui.QColor("#a9b7c6")
@@ -167,13 +223,42 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
     COLOR_MATCHING_BRACE = QtGui.QColor("#36587f")
     COLOR_UNMATCHED_BRACE = QtGui.QColor("#6e2b28")
     COLOR_INDENT_GUIDE = QtGui.QColor(255, 255, 255, 25)
+    COLOR_LINT_ERROR = QtGui.QColor("#ff5555")
+    COLOR_LINT_WARNING = QtGui.QColor("#d5b55f")
 
-    def __init__(self, parent=None):
+    # settings["colors"] key -> class color attribute
+    COLOR_SETTING_KEYS = {
+        "background": "COLOR_BACKGROUND",
+        "text": "COLOR_TEXT",
+        "current_line": "COLOR_CURRENT_LINE",
+        "line_number_background": "COLOR_LINE_NUMBER_BACKGROUND",
+        "line_number": "COLOR_LINE_NUMBER",
+        "line_number_current": "COLOR_LINE_NUMBER_CURRENT",
+        "matching_word": "COLOR_MATCHING_WORD",
+        "matching_brace": "COLOR_MATCHING_BRACE",
+        "unmatched_brace": "COLOR_UNMATCHED_BRACE",
+        "indent_guide": "COLOR_INDENT_GUIDE",
+        "lint_error": "COLOR_LINT_ERROR",
+        "lint_warning": "COLOR_LINT_WARNING",
+    }
+
+    lintUpdated = QtCore.Signal(list)
+    gotFocus = QtCore.Signal()
+
+    def __init__(self, parent=None, settings=None, document=None, lint=True):
         super().__init__(parent)
 
-        font = QtGui.QFont("Consolas")
+        settings = settings or {}
+        colors = settings.get("colors", {})
+        for key, attr in self.COLOR_SETTING_KEYS.items():
+            if key in colors:
+                setattr(self, attr, QtGui.QColor(colors[key]))
+
+        self.INDENT = " " * int(settings.get("indent_width", 4))
+
+        font = QtGui.QFont(settings.get("font_family", "Consolas"))
         font.setStyleHint(QtGui.QFont.Monospace)
-        font.setPointSize(10)
+        font.setPointSize(int(settings.get("font_size", 10)))
         self.setFont(font)
 
         self.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
@@ -185,7 +270,13 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
         palette.setColor(QtGui.QPalette.Text, self.COLOR_TEXT)
         self.setPalette(palette)
 
-        self.highlighter = PythonHighlighter(self.document())
+        if document is not None:
+            self.setDocument(document)
+
+        # one highlighter per document, even when shared by split views
+        if getattr(self.document(), "_aepython_highlighter", None) is None:
+            self.document()._aepython_highlighter = PythonHighlighter(self.document(), colors)
+        self.highlighter = self.document()._aepython_highlighter
 
         self.lineNumberArea = LineNumberArea(self)
         self.blockCountChanged.connect(self.updateLineNumberAreaWidth)
@@ -200,8 +291,21 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
         self._completer.setModel(self._completer_model)
         self._completer.activated.connect(self._insert_completion)
 
+        self.lint_results = []
+        self._lint_selections = []
+        self._lint_timer = QtCore.QTimer(self)
+        self._lint_timer.setSingleShot(True)
+        self._lint_timer.setInterval(self.LINT_INTERVAL_MS)
+        self._lint_timer.timeout.connect(self.run_lint)
+        if lint:
+            self.textChanged.connect(self._lint_timer.start)
+
         self.updateLineNumberAreaWidth(0)
         self.updateExtraSelections()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.gotFocus.emit()
 
     # ---- line number area -------------------------------------------------
 
@@ -285,6 +389,38 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
             block = block.next()
             top = bottom
 
+    # ---- code check (lint) ------------------------------------------------
+
+    def run_lint(self):
+        self.lint_results = check_code(self.toPlainText())
+        self._lint_selections = []
+
+        for result in self.lint_results:
+            block = self.document().findBlockByNumber(result["line"] - 1)
+            if not block.isValid():
+                continue
+
+            text = block.text()
+            col = min(result["col"], max(len(text) - 1, 0))
+            cursor = QtGui.QTextCursor(self.document())
+            cursor.setPosition(block.position() + col)
+            cursor.movePosition(QtGui.QTextCursor.EndOfWord, QtGui.QTextCursor.KeepAnchor)
+            if not cursor.hasSelection():
+                # no word at the position: underline the line content
+                start = len(text) - len(text.lstrip())
+                cursor.setPosition(block.position() + start)
+                cursor.movePosition(QtGui.QTextCursor.EndOfBlock, QtGui.QTextCursor.KeepAnchor)
+
+            selection = QtWidgets.QTextEdit.ExtraSelection()
+            selection.cursor = cursor
+            selection.format.setUnderlineStyle(QtGui.QTextCharFormat.WaveUnderline)
+            selection.format.setUnderlineColor(
+                self.COLOR_LINT_ERROR if result["kind"] == "error" else self.COLOR_LINT_WARNING)
+            self._lint_selections.append(selection)
+
+        self.updateExtraSelections()
+        self.lintUpdated.emit(self.lint_results)
+
     # ---- extra selections (current line / braces / matching words) --------
 
     def updateExtraSelections(self):
@@ -300,6 +436,7 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
 
         selections += self._matching_word_selections()
         selections += self._brace_selections()
+        selections += self._lint_selections
 
         self.setExtraSelections(selections)
         self.lineNumberArea.update()

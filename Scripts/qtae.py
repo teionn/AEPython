@@ -1,5 +1,6 @@
 import sys
 import os
+import ast
 import json
 import textwrap
 
@@ -30,10 +31,65 @@ QMainWindow, QDialog, QAbstractButton, QLabel{
     app.setStyleSheet(style)
 
 
+class EditorPane(QtWidgets.QWidget):
+    """One document tab: a code editor with an optional split view sharing the document."""
+
+    def __init__(self, settings, parent=None):
+        super().__init__(parent)
+
+        self.file_path = None
+        self.__settings = settings
+
+        layout = QtWidgets.QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
+
+        self.splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        layout.addWidget(self.splitter)
+
+        self.editor = CodeEditor(settings=settings)
+        self.editor.gotFocus.connect(lambda: self.__set_active(self.editor))
+        self.splitter.addWidget(self.editor)
+
+        self.second_editor = None
+        self.__active = self.editor
+
+    def __set_active(self, editor):
+        self.__active = editor
+
+    def active_editor(self):
+        if self.__active is self.second_editor and self.second_editor is None:
+            return self.editor
+        return self.__active
+
+    def is_split(self):
+        return self.second_editor is not None
+
+    def set_split(self, split):
+        if split == self.is_split():
+            return
+
+        if split:
+            self.second_editor = CodeEditor(
+                settings=self.__settings, document=self.editor.document(), lint=False)
+            self.second_editor.gotFocus.connect(lambda: self.__set_active(self.second_editor))
+            self.splitter.addWidget(self.second_editor)
+            height = max(self.splitter.height(), 2)
+            self.splitter.setSizes([height // 2, height // 2])
+        else:
+            self.second_editor.setParent(None)
+            self.second_editor.deleteLater()
+            self.second_editor = None
+            self.__active = self.editor
+            self.editor.setFocus()
+
+
 class FindReplaceBar(QtWidgets.QWidget):
-    def __init__(self, editor_provider, parent=None):
+    def __init__(self, editor_provider, tabs_provider, activate_callback, parent=None):
         super().__init__(parent)
         self.__editor_provider = editor_provider
+        self.__tabs_provider = tabs_provider
+        self.__activate_callback = activate_callback
 
         layout = QtWidgets.QGridLayout()
         layout.setContentsMargins(0, 2, 0, 2)
@@ -52,18 +108,23 @@ class FindReplaceBar(QtWidgets.QWidget):
         self.button_next.clicked.connect(self.find_next)
         layout.addWidget(self.button_next, 0, 2)
 
+        self.button_all_tabs = QtWidgets.QPushButton("All Tabs")
+        self.button_all_tabs.setToolTip("Search in all open tabs")
+        self.button_all_tabs.clicked.connect(self.search_all_tabs)
+        layout.addWidget(self.button_all_tabs, 0, 3)
+
         self.check_case = QtWidgets.QCheckBox("Aa")
         self.check_case.setToolTip("Match case")
-        layout.addWidget(self.check_case, 0, 3)
+        layout.addWidget(self.check_case, 0, 4)
 
         self.label_status = QtWidgets.QLabel("")
         self.label_status.setMinimumWidth(80)
-        layout.addWidget(self.label_status, 0, 4)
+        layout.addWidget(self.label_status, 0, 5)
 
         self.button_close = QtWidgets.QPushButton("X")
         self.button_close.setFixedWidth(24)
         self.button_close.clicked.connect(self.close_bar)
-        layout.addWidget(self.button_close, 0, 5)
+        layout.addWidget(self.button_close, 0, 6)
 
         self.replace_edit = QtWidgets.QLineEdit()
         self.replace_edit.setPlaceholderText("Replace with")
@@ -77,6 +138,13 @@ class FindReplaceBar(QtWidgets.QWidget):
         self.button_replace_all = QtWidgets.QPushButton("All")
         self.button_replace_all.clicked.connect(self.replace_all)
         layout.addWidget(self.button_replace_all, 1, 3, 1, 2)
+
+        self.results_list = QtWidgets.QListWidget()
+        self.results_list.setMaximumHeight(120)
+        self.results_list.itemActivated.connect(self.__activate_result)
+        self.results_list.itemClicked.connect(self.__activate_result)
+        self.results_list.hide()
+        layout.addWidget(self.results_list, 2, 0, 1, 7)
 
         self.__replace_widgets = [self.replace_edit, self.button_replace, self.button_replace_all]
 
@@ -92,7 +160,7 @@ class FindReplaceBar(QtWidgets.QWidget):
         editor = self.__editor_provider()
         if editor is not None:
             selected = editor.textCursor().selectedText()
-            if selected != "" and " " not in selected:
+            if selected != "" and " " not in selected:
                 self.find_edit.setText(selected)
 
         self.show()
@@ -104,6 +172,8 @@ class FindReplaceBar(QtWidgets.QWidget):
 
     def close_bar(self):
         self.hide()
+        self.results_list.hide()
+        self.results_list.clear()
         editor = self.__editor_provider()
         if editor is not None:
             editor.setFocus()
@@ -183,6 +253,44 @@ class FindReplaceBar(QtWidgets.QWidget):
 
         self.label_status.setText(f"{count} replaced")
 
+    def search_all_tabs(self):
+        MAX_RESULTS = 500
+
+        text = self.find_edit.text()
+        self.results_list.clear()
+        if text == "":
+            self.results_list.hide()
+            return
+
+        needle = text if self.check_case.isChecked() else text.lower()
+        count = 0
+
+        for name, editor, tab_index in self.__tabs_provider():
+            document = editor.document()
+            haystack = editor.toPlainText()
+            if not self.check_case.isChecked():
+                haystack = haystack.lower()
+
+            pos = haystack.find(needle)
+            while pos >= 0 and count < MAX_RESULTS:
+                block = document.findBlock(pos)
+                item = QtWidgets.QListWidgetItem(
+                    f"{name}  {block.blockNumber() + 1}: {block.text().strip()}")
+                item.setData(QtCore.Qt.UserRole, (tab_index, pos, pos + len(text)))
+                self.results_list.addItem(item)
+                count += 1
+                pos = haystack.find(needle, pos + 1)
+
+            if count >= MAX_RESULTS:
+                break
+
+        self.label_status.setText(f"{count} matches")
+        self.results_list.setVisible(count > 0)
+
+    def __activate_result(self, item):
+        tab_index, start, end = item.data(QtCore.Qt.UserRole)
+        self.__activate_callback(tab_index, start, end)
+
 
 class PythonWindow(QtWidgets.QMainWindow):
     class Logger:
@@ -202,11 +310,24 @@ class PythonWindow(QtWidgets.QMainWindow):
         def flush(self):
             pass
 
-    SESSION_DIR = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), "AEPython")
-    SESSION_FILE = os.path.join(SESSION_DIR, "session.json")
+    CONFIG_DIR = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), "AEPython")
+    SESSION_FILE = os.path.join(CONFIG_DIR, "session.json")
+    SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
+
+    DEFAULT_SETTINGS = {
+        "font_family": "Consolas",
+        "font_size": 10,
+        "indent_width": 4,
+        "colors": {},
+        "shortcuts": {},
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        self.settings = self.__load_settings()
+        self.__show_whitespace = False
+        self.__actions = {}
 
         self.centralWidget = QtWidgets.QWidget()
         self.setCentralWidget(self.centralWidget)
@@ -240,10 +361,18 @@ class PythonWindow(QtWidgets.QMainWindow):
         self.tabs.setMovable(True)
         self.tabs.setDocumentMode(True)
         self.tabs.tabCloseRequested.connect(self.__close_tab)
-        self.tabs.currentChanged.connect(self.__update_title)
+        self.tabs.currentChanged.connect(self.__on_current_tab_changed)
         code_layout.addWidget(self.tabs)
 
-        self.find_bar = FindReplaceBar(self.__current_editor)
+        self.problems_list = QtWidgets.QListWidget()
+        self.problems_list.setMaximumHeight(90)
+        self.problems_list.itemActivated.connect(self.__activate_problem)
+        self.problems_list.itemClicked.connect(self.__activate_problem)
+        self.problems_list.hide()
+        code_layout.addWidget(self.problems_list)
+
+        self.find_bar = FindReplaceBar(self.__current_editor, self.__all_tabs,
+                                       self.__activate_search_result)
         code_layout.addWidget(self.find_bar)
 
         self.button_execute = QtWidgets.QPushButton("Execute (Ctrl+Enter)")
@@ -256,7 +385,9 @@ class PythonWindow(QtWidgets.QMainWindow):
         splitter.setStretchFactor(1, 2)
         splitter.setSizes([200, 400])
 
+        self.__build_outline_dock()
         self.__build_menus()
+        self.__apply_shortcut_settings()
 
         if not self.__restore_session():
             self.__add_tab()
@@ -267,97 +398,237 @@ class PythonWindow(QtWidgets.QMainWindow):
         sys.stderr = self.Logger(self.textedit_output, QtGui.QColor(255, 0, 0), self.show)
         print("AE Python 1.0.0")
 
+    # ---- settings ---------------------------------------------------------
+
+    def __load_settings(self):
+        settings = dict(self.DEFAULT_SETTINGS)
+        try:
+            if os.path.isfile(self.SETTINGS_FILE):
+                with open(self.SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                    settings.update(json.load(f))
+            else:
+                # write a template so the settings are discoverable
+                os.makedirs(self.CONFIG_DIR, exist_ok=True)
+                with open(self.SETTINGS_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(self.DEFAULT_SETTINGS, f, indent=4)
+        except:
+            import traceback
+            traceback.print_exc()
+        return settings
+
+    def __apply_shortcut_settings(self):
+        for name, sequence in self.settings.get("shortcuts", {}).items():
+            action = self.__actions.get(name)
+            if action is not None:
+                action.setShortcut(QtGui.QKeySequence(sequence))
+
+    # ---- menus ------------------------------------------------------------
+
     def __build_menus(self):
-        def add_action(menu, text, slot, shortcut=None):
+        def add_action(menu, name, text, slot, shortcut=None, checkable=False):
             action = QtWidgets.QAction(text, self)
             if shortcut is not None:
                 if isinstance(shortcut, list):
                     action.setShortcuts(shortcut)
                 else:
                     action.setShortcut(shortcut)
-            action.triggered.connect(slot)
+            if checkable:
+                action.setCheckable(True)
+                action.toggled.connect(slot)
+            else:
+                action.triggered.connect(slot)
             menu.addAction(action)
+            self.__actions[name] = action
             return action
 
         file_menu = self.menuBar().addMenu("File")
-        add_action(file_menu, "New", self.__new_file, QtGui.QKeySequence.New)
-        add_action(file_menu, "Open...", self.__open_file, QtGui.QKeySequence.Open)
-        add_action(file_menu, "Save", self.__save_file, QtGui.QKeySequence.Save)
-        add_action(file_menu, "Save As...", self.__save_file_as, QtGui.QKeySequence("Ctrl+Shift+S"))
-        add_action(file_menu, "Close Tab", self.__close_current_tab, QtGui.QKeySequence("Ctrl+W"))
+        add_action(file_menu, "new", "New", self.__new_file, QtGui.QKeySequence.New)
+        add_action(file_menu, "open", "Open...", self.__open_file, QtGui.QKeySequence.Open)
+        add_action(file_menu, "save", "Save", self.__save_file, QtGui.QKeySequence.Save)
+        add_action(file_menu, "save_as", "Save As...", self.__save_file_as,
+                   QtGui.QKeySequence("Ctrl+Shift+S"))
+        add_action(file_menu, "close_tab", "Close Tab", self.__close_current_tab,
+                   QtGui.QKeySequence("Ctrl+W"))
         file_menu.addSeparator()
-        add_action(file_menu, "Execute Python File", self.__execute_file)
+        add_action(file_menu, "execute_python_file", "Execute Python File", self.__execute_file)
 
         edit_menu = self.menuBar().addMenu("Edit")
-        add_action(edit_menu, "Find...", lambda: self.find_bar.show_find(False),
-                   QtGui.QKeySequence.Find)
-        add_action(edit_menu, "Replace...", lambda: self.find_bar.show_find(True),
-                   QtGui.QKeySequence.Replace)
-        add_action(edit_menu, "Find Next", self.find_bar.find_next, QtGui.QKeySequence.FindNext)
-        add_action(edit_menu, "Find Previous", self.find_bar.find_previous,
-                   QtGui.QKeySequence.FindPrevious)
+        add_action(edit_menu, "undo", "Undo", self.__undo, QtGui.QKeySequence.Undo)
+        add_action(edit_menu, "redo", "Redo", self.__redo, QtGui.QKeySequence.Redo)
         edit_menu.addSeparator()
-        add_action(edit_menu, "Go to Line...", self.__go_to_line, QtGui.QKeySequence("Ctrl+G"))
-        add_action(edit_menu, "Toggle Comment", self.__toggle_comment)
+        add_action(edit_menu, "find", "Find...", lambda: self.find_bar.show_find(False),
+                   QtGui.QKeySequence.Find)
+        add_action(edit_menu, "replace", "Replace...", lambda: self.find_bar.show_find(True),
+                   QtGui.QKeySequence.Replace)
+        add_action(edit_menu, "find_next", "Find Next", self.find_bar.find_next,
+                   QtGui.QKeySequence.FindNext)
+        add_action(edit_menu, "find_previous", "Find Previous", self.find_bar.find_previous,
+                   QtGui.QKeySequence.FindPrevious)
+        add_action(edit_menu, "find_in_tabs", "Find in All Tabs",
+                   self.__find_in_all_tabs, QtGui.QKeySequence("Ctrl+Shift+F"))
+        edit_menu.addSeparator()
+        add_action(edit_menu, "go_to_line", "Go to Line...", self.__go_to_line,
+                   QtGui.QKeySequence("Ctrl+G"))
+        add_action(edit_menu, "toggle_comment", "Toggle Comment", self.__toggle_comment)
+
+        view_menu = self.menuBar().addMenu("View")
+        self.action_split = add_action(view_menu, "split_editor", "Split Editor",
+                                       self.__toggle_split, QtGui.QKeySequence("Ctrl+Alt+S"),
+                                       checkable=True)
+        add_action(view_menu, "show_whitespace", "Show Whitespace",
+                   self.__set_show_whitespace, checkable=True)
+        view_menu.addAction(self.outline_dock.toggleViewAction())
+        self.__actions["outline"] = self.outline_dock.toggleViewAction()
 
         run_menu = self.menuBar().addMenu("Run")
-        add_action(run_menu, "Execute", self.__execute,
+        add_action(run_menu, "execute", "Execute", self.__execute,
                    [QtGui.QKeySequence("Ctrl+Return"), QtGui.QKeySequence("Ctrl+Enter")])
-        add_action(run_menu, "Execute Current Line", self.__execute_line,
+        add_action(run_menu, "execute_line", "Execute Current Line", self.__execute_line,
                    [QtGui.QKeySequence("Ctrl+Shift+Return"), QtGui.QKeySequence("Ctrl+Shift+Enter")])
+        add_action(run_menu, "check_code", "Check Code", self.__check_code_now)
+
+    # ---- outline ----------------------------------------------------------
+
+    def __build_outline_dock(self):
+        self.outline_tree = QtWidgets.QTreeWidget()
+        self.outline_tree.setHeaderHidden(True)
+        self.outline_tree.itemActivated.connect(self.__activate_outline_item)
+        self.outline_tree.itemClicked.connect(self.__activate_outline_item)
+
+        self.outline_dock = QtWidgets.QDockWidget("Outline", self)
+        self.outline_dock.setObjectName("OutlineDock")
+        self.outline_dock.setWidget(self.outline_tree)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.outline_dock)
+        self.outline_dock.hide()
+
+    def __refresh_outline(self):
+        pane = self.__current_pane()
+        if pane is None:
+            self.outline_tree.clear()
+            return
+
+        try:
+            tree = ast.parse(pane.editor.toPlainText())
+        except SyntaxError:
+            return  # keep the previous outline while the code does not parse
+
+        self.outline_tree.clear()
+
+        def add_nodes(body, parent):
+            for node in body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    kind = "class" if isinstance(node, ast.ClassDef) else "def"
+                    item = QtWidgets.QTreeWidgetItem([f"{kind} {node.name}"])
+                    item.setData(0, QtCore.Qt.UserRole, node.lineno)
+                    if isinstance(parent, QtWidgets.QTreeWidgetItem):
+                        parent.addChild(item)
+                    else:
+                        parent.addTopLevelItem(item)
+                    add_nodes(node.body, item)
+
+        add_nodes(tree.body, self.outline_tree)
+        self.outline_tree.expandAll()
+
+    def __activate_outline_item(self, item, column=0):
+        line = item.data(0, QtCore.Qt.UserRole)
+        if line is not None:
+            self.__go_to_position_in_current(line=line)
+
+    # ---- problems (code check results) ------------------------------------
+
+    def __on_lint_updated(self, pane, results):
+        if pane is self.__current_pane():
+            self.__update_problems(results)
+            self.__refresh_outline()
+
+    def __update_problems(self, results):
+        self.problems_list.clear()
+        for result in results:
+            mark = "[E]" if result["kind"] == "error" else "[W]"
+            item = QtWidgets.QListWidgetItem(
+                f"{mark} Line {result['line']}: {result['message']}")
+            if result["kind"] == "error":
+                item.setForeground(QtGui.QColor("#ff5555"))
+            item.setData(QtCore.Qt.UserRole, (result["line"], result["col"]))
+            self.problems_list.addItem(item)
+        self.problems_list.setVisible(len(results) > 0)
+
+    def __activate_problem(self, item):
+        line, col = item.data(QtCore.Qt.UserRole)
+        self.__go_to_position_in_current(line=line, col=col)
+
+    def __check_code_now(self):
+        editor = self.__current_editor()
+        if editor is not None:
+            editor.run_lint()
 
     # ---- tabs -------------------------------------------------------------
 
     def __add_tab(self, file_path=None, content=None, modified=False):
-        editor = CodeEditor()
-        editor.file_path = file_path
+        pane = EditorPane(self.settings)
+        pane.file_path = file_path
 
         if content is not None:
-            editor.setPlainText(content)
+            pane.editor.setPlainText(content)
         elif file_path is not None:
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
-                    editor.setPlainText(f.read())
+                    pane.editor.setPlainText(f.read())
             except:
                 import traceback
                 traceback.print_exc()
 
-        editor.document().setModified(modified)
-        editor.document().modificationChanged.connect(
-            lambda _, e=editor: self.__update_tab_text(e))
+        pane.editor.document().setModified(modified)
+        pane.editor.document().modificationChanged.connect(
+            lambda _, p=pane: self.__update_tab_text(p))
+        pane.editor.lintUpdated.connect(
+            lambda results, p=pane: self.__on_lint_updated(p, results))
+        self.__apply_whitespace_option(pane.editor)
 
-        index = self.tabs.addTab(editor, self.__tab_name(editor))
+        index = self.tabs.addTab(pane, self.__tab_name(pane))
         self.tabs.setTabToolTip(index, "" if file_path is None else file_path)
         self.tabs.setCurrentIndex(index)
-        editor.setFocus()
-        return editor
+        pane.editor.setFocus()
+        return pane
 
-    def __tab_name(self, editor):
-        name = "untitled" if editor.file_path is None else os.path.basename(editor.file_path)
-        if editor.document().isModified():
+    def __tab_name(self, pane):
+        name = "untitled" if pane.file_path is None else os.path.basename(pane.file_path)
+        if pane.editor.document().isModified():
             name += "*"
         return name
 
-    def __update_tab_text(self, editor):
-        index = self.tabs.indexOf(editor)
+    def __update_tab_text(self, pane):
+        index = self.tabs.indexOf(pane)
         if index >= 0:
-            self.tabs.setTabText(index, self.__tab_name(editor))
-            self.tabs.setTabToolTip(index, "" if editor.file_path is None else editor.file_path)
+            self.tabs.setTabText(index, self.__tab_name(pane))
+            self.tabs.setTabToolTip(index, "" if pane.file_path is None else pane.file_path)
         self.__update_title()
 
-    def __current_editor(self):
+    def __current_pane(self):
         widget = self.tabs.currentWidget()
-        return widget if isinstance(widget, CodeEditor) else None
+        return widget if isinstance(widget, EditorPane) else None
+
+    def __current_editor(self):
+        pane = self.__current_pane()
+        return None if pane is None else pane.active_editor()
+
+    def __all_tabs(self):
+        tabs = []
+        for index in range(self.tabs.count()):
+            pane = self.tabs.widget(index)
+            if isinstance(pane, EditorPane):
+                tabs.append((self.__tab_name(pane), pane.editor, index))
+        return tabs
 
     def __close_tab(self, index):
-        editor = self.tabs.widget(index)
-        if not isinstance(editor, CodeEditor):
+        pane = self.tabs.widget(index)
+        if not isinstance(pane, EditorPane):
             return
-        if not self.__maybe_save(editor):
+        if not self.__maybe_save(pane):
             return
 
         self.tabs.removeTab(index)
-        editor.deleteLater()
+        pane.deleteLater()
 
         if self.tabs.count() == 0:
             self.__add_tab()
@@ -368,27 +639,60 @@ class PythonWindow(QtWidgets.QMainWindow):
         if index >= 0:
             self.__close_tab(index)
 
+    def __on_current_tab_changed(self, *args):
+        self.__update_title()
+        pane = self.__current_pane()
+        if pane is not None:
+            self.action_split.blockSignals(True)
+            self.action_split.setChecked(pane.is_split())
+            self.action_split.blockSignals(False)
+            self.__update_problems(pane.editor.lint_results)
+        self.__refresh_outline()
+
     def __update_title(self, *args):
-        editor = self.__current_editor()
-        if editor is None:
+        pane = self.__current_pane()
+        if pane is None:
             self.setWindowTitle("AE Python")
             return
-        name = "untitled" if editor.file_path is None else os.path.basename(editor.file_path)
+        name = "untitled" if pane.file_path is None else os.path.basename(pane.file_path)
         self.setWindowTitle(f"AE Python - {name}[*]")
-        self.setWindowModified(editor.document().isModified())
+        self.setWindowModified(pane.editor.document().isModified())
+
+    # ---- view -------------------------------------------------------------
+
+    def __toggle_split(self, checked):
+        pane = self.__current_pane()
+        if pane is None:
+            return
+        pane.set_split(checked)
+        if pane.second_editor is not None:
+            self.__apply_whitespace_option(pane.second_editor)
+
+    def __set_show_whitespace(self, checked):
+        self.__show_whitespace = checked
+        for _, editor, _ in self.__all_tabs():
+            self.__apply_whitespace_option(editor)
+
+    def __apply_whitespace_option(self, editor):
+        option = editor.document().defaultTextOption()
+        if self.__show_whitespace:
+            option.setFlags(option.flags() | QtGui.QTextOption.ShowTabsAndSpaces)
+        else:
+            option.setFlags(option.flags() & ~QtGui.QTextOption.ShowTabsAndSpaces)
+        editor.document().setDefaultTextOption(option)
 
     # ---- file operations --------------------------------------------------
 
-    def __maybe_save(self, editor):
-        if not editor.document().isModified():
+    def __maybe_save(self, pane):
+        if not pane.editor.document().isModified():
             return True
-        if editor.toPlainText() == "" and editor.file_path is None:
+        if pane.editor.toPlainText() == "" and pane.file_path is None:
             return True
 
-        self.tabs.setCurrentWidget(editor)
+        self.tabs.setCurrentWidget(pane)
         ret = QtWidgets.QMessageBox.warning(
             self, "AE Python",
-            f"'{self.__tab_name(editor).rstrip('*')}' has been modified.\n"
+            f"'{self.__tab_name(pane).rstrip('*')}' has been modified.\n"
             "Do you want to save your changes?",
             QtWidgets.QMessageBox.Save | QtWidgets.QMessageBox.Discard | QtWidgets.QMessageBox.Cancel)
 
@@ -407,15 +711,16 @@ class PythonWindow(QtWidgets.QMainWindow):
             return
 
         for index in range(self.tabs.count()):
-            editor = self.tabs.widget(index)
-            if isinstance(editor, CodeEditor) and editor.file_path == file_path:
+            pane = self.tabs.widget(index)
+            if isinstance(pane, EditorPane) and pane.file_path == file_path:
                 self.tabs.setCurrentIndex(index)
                 return
 
         # reuse an empty untitled tab
-        current = self.__current_editor()
+        current = self.__current_pane()
         if current is not None and current.file_path is None \
-                and current.toPlainText() == "" and not current.document().isModified():
+                and current.editor.toPlainText() == "" \
+                and not current.editor.document().isModified():
             self.tabs.removeTab(self.tabs.indexOf(current))
             current.deleteLater()
 
@@ -423,27 +728,27 @@ class PythonWindow(QtWidgets.QMainWindow):
         self.__save_session()
 
     def __save_file(self):
-        editor = self.__current_editor()
-        if editor is None:
+        pane = self.__current_pane()
+        if pane is None:
             return False
-        if editor.file_path is None:
+        if pane.file_path is None:
             return self.__save_file_as()
 
         try:
-            with open(editor.file_path, 'w', encoding='utf-8') as f:
-                f.write(editor.toPlainText())
+            with open(pane.file_path, 'w', encoding='utf-8') as f:
+                f.write(pane.editor.toPlainText())
         except:
             import traceback
             traceback.print_exc()
             return False
 
-        editor.document().setModified(False)
+        pane.editor.document().setModified(False)
         self.__save_session()
         return True
 
     def __save_file_as(self):
-        editor = self.__current_editor()
-        if editor is None:
+        pane = self.__current_pane()
+        if pane is None:
             return False
 
         file_path = QtWidgets.QFileDialog.getSaveFileName(
@@ -451,15 +756,15 @@ class PythonWindow(QtWidgets.QMainWindow):
         if file_path == '':
             return False
 
-        editor.file_path = file_path
-        self.__update_tab_text(editor)
+        pane.file_path = file_path
+        self.__update_tab_text(pane)
         return self.__save_file()
 
     def __default_dir(self):
-        editor = self.__current_editor()
-        if editor is None or editor.file_path is None:
+        pane = self.__current_pane()
+        if pane is None or pane.file_path is None:
             return ""
-        return os.path.dirname(editor.file_path)
+        return os.path.dirname(pane.file_path)
 
     # ---- session ----------------------------------------------------------
 
@@ -467,18 +772,18 @@ class PythonWindow(QtWidgets.QMainWindow):
         try:
             tabs = []
             for index in range(self.tabs.count()):
-                editor = self.tabs.widget(index)
-                if not isinstance(editor, CodeEditor):
+                pane = self.tabs.widget(index)
+                if not isinstance(pane, EditorPane):
                     continue
-                modified = editor.document().isModified()
-                content = editor.toPlainText() if (editor.file_path is None or modified) else None
+                modified = pane.editor.document().isModified()
+                content = pane.editor.toPlainText() if (pane.file_path is None or modified) else None
                 tabs.append({
-                    "file_path": editor.file_path,
+                    "file_path": pane.file_path,
                     "content": content,
                     "modified": modified,
                 })
 
-            os.makedirs(self.SESSION_DIR, exist_ok=True)
+            os.makedirs(self.CONFIG_DIR, exist_ok=True)
             with open(self.SESSION_FILE, 'w', encoding='utf-8') as f:
                 json.dump({"tabs": tabs, "current": self.tabs.currentIndex()}, f)
         except:
@@ -517,6 +822,31 @@ class PythonWindow(QtWidgets.QMainWindow):
 
     # ---- editing ----------------------------------------------------------
 
+    def __undo(self):
+        editor = self.__current_editor()
+        if editor is not None:
+            editor.undo()
+
+    def __redo(self):
+        editor = self.__current_editor()
+        if editor is not None:
+            editor.redo()
+
+    def __go_to_position_in_current(self, line, col=0):
+        editor = self.__current_editor()
+        if editor is None:
+            return
+
+        block = editor.document().findBlockByNumber(line - 1)
+        if not block.isValid():
+            return
+        cursor = QtGui.QTextCursor(block)
+        cursor.movePosition(QtGui.QTextCursor.Right, QtGui.QTextCursor.MoveAnchor,
+                            min(col, len(block.text())))
+        editor.setTextCursor(cursor)
+        editor.centerCursor()
+        editor.setFocus()
+
     def __go_to_line(self):
         editor = self.__current_editor()
         if editor is None:
@@ -525,18 +855,31 @@ class PythonWindow(QtWidgets.QMainWindow):
         line, ok = QtWidgets.QInputDialog.getInt(
             self, "Go to Line", "Line:",
             editor.textCursor().blockNumber() + 1, 1, editor.blockCount())
-        if not ok:
-            return
-
-        cursor = QtGui.QTextCursor(editor.document().findBlockByNumber(line - 1))
-        editor.setTextCursor(cursor)
-        editor.centerCursor()
-        editor.setFocus()
+        if ok:
+            self.__go_to_position_in_current(line=line)
 
     def __toggle_comment(self):
         editor = self.__current_editor()
         if editor is not None:
             editor.toggle_comment()
+
+    def __find_in_all_tabs(self):
+        self.find_bar.show_find(False)
+        if self.find_bar.find_edit.text() != "":
+            self.find_bar.search_all_tabs()
+
+    def __activate_search_result(self, tab_index, start, end):
+        self.tabs.setCurrentIndex(tab_index)
+        pane = self.__current_pane()
+        if pane is None:
+            return
+        editor = pane.editor
+        cursor = QtGui.QTextCursor(editor.document())
+        cursor.setPosition(start)
+        cursor.setPosition(end, QtGui.QTextCursor.KeepAnchor)
+        editor.setTextCursor(cursor)
+        editor.centerCursor()
+        editor.setFocus()
 
     # ---- execution --------------------------------------------------------
 
