@@ -1,3 +1,4 @@
 PySide2==5.15.2.1
 pywin32==305
 pyflakes==3.2.0
+dukpy==0.6.0

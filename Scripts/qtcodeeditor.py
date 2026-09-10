@@ -212,6 +212,7 @@ class JavaScriptHighlighter(QtGui.QSyntaxHighlighter):
 
     STATE_NONE = 0
     STATE_BLOCK_COMMENT = 3
+    STATE_TEMPLATE_LITERAL = 4
 
     def __init__(self, document, colors=None):
         super().__init__(document)
@@ -252,6 +253,15 @@ class JavaScriptHighlighter(QtGui.QSyntaxHighlighter):
             self.setFormat(0, end + 2, self.format_comment)
             protected.append((0, end + 2))
             pos = end + 2
+        elif self.previousBlockState() == self.STATE_TEMPLATE_LITERAL:
+            end = self._find_template_end(text, 0)
+            if end == -1:
+                self.setFormat(0, len(text), self.format_string)
+                self.setCurrentBlockState(self.STATE_TEMPLATE_LITERAL)
+                return
+            self.setFormat(0, end, self.format_string)
+            protected.append((0, end))
+            pos = end
 
         i = pos
         length = len(text)
@@ -270,6 +280,16 @@ class JavaScriptHighlighter(QtGui.QSyntaxHighlighter):
                 self.setFormat(i, end + 2 - i, self.format_comment)
                 protected.append((i, end + 2))
                 i = end + 2
+            elif text[i] == "`":
+                end = self._find_template_end(text, i + 1)
+                if end == -1:
+                    self.setFormat(i, length - i, self.format_string)
+                    protected.append((i, length))
+                    self.setCurrentBlockState(self.STATE_TEMPLATE_LITERAL)
+                    break
+                self.setFormat(i, end - i, self.format_string)
+                protected.append((i, end))
+                i = end
             elif text[i] in "'\"":
                 end = PythonHighlighter._find_string_end(text, i, text[i])
                 self.setFormat(i, end - i, self.format_string)
@@ -285,6 +305,32 @@ class JavaScriptHighlighter(QtGui.QSyntaxHighlighter):
             for match in pattern.finditer(text):
                 if not is_protected(match.start()):
                     self.setFormat(match.start(), match.end() - match.start(), fmt)
+
+    @staticmethod
+    def _find_template_end(text, start):
+        """Index just after the closing backtick, or -1 when unterminated."""
+        i = start
+        while i < len(text):
+            if text[i] == "\\":
+                i += 2
+                continue
+            if text[i] == "`":
+                return i + 1
+            i += 1
+        return -1
+
+
+class TypeScriptHighlighter(JavaScriptHighlighter):
+    KEYWORDS = JavaScriptHighlighter.KEYWORDS + [
+        "let", "const", "class", "extends", "super", "static", "get", "set",
+        "import", "export", "from", "as", "of", "async", "await", "yield",
+        "interface", "type", "enum", "implements", "public", "private",
+        "protected", "readonly", "declare", "namespace", "module", "abstract",
+        "number", "string", "boolean", "any", "void", "never", "unknown",
+        "symbol", "object"
+    ]
+
+    BUILTINS = JavaScriptHighlighter.BUILTINS + ["console"]
 
 
 class LineNumberArea(QtWidgets.QWidget):
@@ -374,8 +420,10 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
 
         # one highlighter per document, even when shared by split views
         if getattr(self.document(), "_aepython_highlighter", None) is None:
-            highlighter_class = (PythonHighlighter if language == "python"
-                                 else JavaScriptHighlighter)
+            highlighter_class = {
+                "python": PythonHighlighter,
+                "ts": TypeScriptHighlighter,
+            }.get(language, JavaScriptHighlighter)
             self.document()._aepython_highlighter = highlighter_class(self.document(), colors)
         self.highlighter = self.document()._aepython_highlighter
 
@@ -987,10 +1035,11 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
             popup.hide()
             return
 
-        if self.language == "python":
-            words = set(PythonHighlighter.KEYWORDS) | set(PythonHighlighter.BUILTINS)
-        else:
-            words = set(JavaScriptHighlighter.KEYWORDS) | set(JavaScriptHighlighter.BUILTINS)
+        keyword_source = {
+            "python": PythonHighlighter,
+            "ts": TypeScriptHighlighter,
+        }.get(self.language, JavaScriptHighlighter)
+        words = set(keyword_source.KEYWORDS) | set(keyword_source.BUILTINS)
         words |= set(re.findall(r"[A-Za-z_]\w{2,}", self.toPlainText()))
         words.discard(prefix)
         self._completer_model.setStringList(sorted(words))

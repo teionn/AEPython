@@ -30,9 +30,10 @@ MIT License (see [LICENSE](./LICENSE).)
 Select menu: Window -> Python
 
 The Code area is a PySide-based code editor with the following features:
-* Python and JSX (ExtendScript) support: each tab has a language, detected automatically when opening .jsx / .js files. Create a JSX tab from File -> New JSX Tab (Ctrl+Shift+N) and execute it with the same shortcuts (results are shown in the Output). File -> Execute JSX File runs a .jsx file directly
+* Python / JSX (ExtendScript) / TypeScript support: each tab has a language, detected automatically when opening .jsx / .js / .ts files. Create tabs from File -> New JSX Tab (Ctrl+Shift+N) or New TypeScript Tab (Ctrl+Alt+N) and execute them with the same shortcuts (results are shown in the Output). File -> Execute JSX File / Execute TypeScript File runs a file directly
+* TypeScript is transpiled on execution to ExtendScript-compatible JavaScript (ES5) with the TypeScript compiler bundled in [dukpy](https://pypi.org/project/dukpy/) (classes, enums, arrow functions, template literals etc. are available; import / export modules are not supported)
 * Multi-document tabs (movable, Ctrl+W to close, Ctrl+Tab to switch)
-* Python / JSX syntax highlighting (comment toggling and auto indent also follow the language)
+* Python / JSX / TypeScript syntax highlighting (comment toggling and auto indent also follow the language)
 * Line numbers, current line highlighting and indent guides
 * Matching brace highlighting and matching word highlighting
 * Automatic closing brace / quote insertion

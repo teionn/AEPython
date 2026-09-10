@@ -180,7 +180,7 @@ class WorkspaceView(QtWidgets.QWidget):
             full = os.path.join(path, name)
             if os.path.isdir(full):
                 directories.append((name, full))
-            elif name.lower().endswith((".py", ".jsx", ".js")):
+            elif name.lower().endswith((".py", ".jsx", ".js", ".ts")):
                 files.append((name, full))
 
         for name, full in directories:
@@ -673,6 +673,8 @@ class PythonWindow(QtWidgets.QMainWindow):
         add_action(file_menu, "new", "New Python Tab", self.__new_file, QtGui.QKeySequence.New)
         add_action(file_menu, "new_jsx", "New JSX Tab", self.__new_jsx_file,
                    QtGui.QKeySequence("Ctrl+Shift+N"))
+        add_action(file_menu, "new_ts", "New TypeScript Tab", self.__new_ts_file,
+                   QtGui.QKeySequence("Ctrl+Alt+N"))
         add_action(file_menu, "open", "Open...", self.__open_file, QtGui.QKeySequence.Open)
         self.recent_menu = file_menu.addMenu("Open Recent")
         self.recent_menu.aboutToShow.connect(self.__rebuild_recent_menu)
@@ -689,6 +691,8 @@ class PythonWindow(QtWidgets.QMainWindow):
         file_menu.addSeparator()
         add_action(file_menu, "execute_python_file", "Execute Python File", self.__execute_file)
         add_action(file_menu, "execute_jsx_file", "Execute JSX File", self.__execute_jsx_file)
+        add_action(file_menu, "execute_ts_file", "Execute TypeScript File",
+                   self.__execute_ts_file)
 
         edit_menu = self.menuBar().addMenu("Edit")
         add_action(edit_menu, "undo", "Undo", self.__undo, QtGui.QKeySequence.Undo)
@@ -811,7 +815,7 @@ class PythonWindow(QtWidgets.QMainWindow):
                 dirs[:] = [d for d in dirs
                            if not d.startswith(".") and d != "__pycache__"]
                 for name in files:
-                    if not name.lower().endswith((".py", ".jsx", ".js")):
+                    if not name.lower().endswith((".py", ".jsx", ".js", ".ts")):
                         continue
                     path = os.path.join(root, name)
                     try:
@@ -860,14 +864,25 @@ class PythonWindow(QtWidgets.QMainWindow):
 
     @staticmethod
     def __jsx_symbols(code):
-        """Collect function definitions from JSX code: [(label, line)]."""
+        """Collect definitions from JSX / TypeScript code: [(label, line)]."""
         symbols = []
         for i, line in enumerate(code.split("\n"), start=1):
+            match = re.match(
+                r"\s*(?:export\s+)?(?:declare\s+)?(?:abstract\s+)?"
+                r"(class|interface|namespace)\s+(\w+)", line)
+            if match is not None:
+                symbols.append((f"{match.group(1)} {match.group(2)}", i))
+                continue
+            match = re.match(r"\s*(?:export\s+)?(?:declare\s+)?(?:const\s+)?enum\s+(\w+)", line)
+            if match is not None:
+                symbols.append((f"enum {match.group(1)}", i))
+                continue
             match = re.search(r"\bfunction\s+(\w+)", line)
             if match is not None:
                 symbols.append((f"function {match.group(1)}", i))
                 continue
-            match = re.match(r"\s*(?:var\s+)?([\w.]+)\s*[:=]\s*function\b", line)
+            match = re.match(r"\s*(?:var\s+|let\s+|const\s+)?([\w.]+)\s*[:=]\s*"
+                             r"(?:function\b|\([^)]*\)\s*(?::\s*[\w.\[\]<>, ]+\s*)?=>)", line)
             if match is not None:
                 symbols.append((f"function {match.group(1)}", i))
         return symbols
@@ -878,7 +893,7 @@ class PythonWindow(QtWidgets.QMainWindow):
             self.outline_tree.clear()
             return
 
-        if pane.language == "jsx":
+        if pane.language in ("jsx", "ts"):
             self.outline_tree.clear()
             for label, line in self.__jsx_symbols(pane.editor.toPlainText()):
                 item = QtWidgets.QTreeWidgetItem([label])
@@ -918,7 +933,7 @@ class PythonWindow(QtWidgets.QMainWindow):
         if pane is None:
             return []
 
-        if pane.language == "jsx":
+        if pane.language in ("jsx", "ts"):
             return self.__jsx_symbols(pane.editor.toPlainText())
 
         try:
@@ -962,7 +977,8 @@ class PythonWindow(QtWidgets.QMainWindow):
         if pane is None:
             self.status_language.setText("")
         else:
-            self.status_language.setText("Python" if pane.language == "python" else "JSX")
+            self.status_language.setText(
+                {"jsx": "JSX", "ts": "TypeScript"}.get(pane.language, "Python"))
 
     def __update_status_position(self):
         editor = self.__current_editor()
@@ -1014,7 +1030,12 @@ class PythonWindow(QtWidgets.QMainWindow):
 
     @staticmethod
     def __language_for_path(file_path):
-        if file_path is not None and file_path.lower().endswith((".jsx", ".js")):
+        if file_path is None:
+            return "python"
+        lower = file_path.lower()
+        if lower.endswith(".ts"):
+            return "ts"
+        if lower.endswith((".jsx", ".js")):
             return "jsx"
         return "python"
 
@@ -1057,7 +1078,8 @@ class PythonWindow(QtWidgets.QMainWindow):
 
     def __tab_name(self, pane):
         if pane.file_path is None:
-            name = "untitled" if pane.language == "python" else "untitled (jsx)"
+            suffix = {"jsx": " (jsx)", "ts": " (ts)"}.get(pane.language, "")
+            name = "untitled" + suffix
         else:
             name = os.path.basename(pane.file_path)
         if pane.editor.document().isModified():
@@ -1268,6 +1290,10 @@ class PythonWindow(QtWidgets.QMainWindow):
         self.__add_tab(language="jsx")
         self.__save_session()
 
+    def __new_ts_file(self):
+        self.__add_tab(language="ts")
+        self.__save_session()
+
     def open_path(self, file_path):
         """Open a file in a tab (activates the existing tab when already open)."""
         for index in range(self.tabs.count()):
@@ -1292,7 +1318,8 @@ class PythonWindow(QtWidgets.QMainWindow):
     def __open_file(self):
         file_path = QtWidgets.QFileDialog.getOpenFileName(
             self, "Open Script File", self.__default_dir(),
-            "Script Files (*.py *.jsx *.js);;Python (*.py);;JSX (*.jsx *.js)")[0]
+            "Script Files (*.py *.jsx *.js *.ts);;Python (*.py);;"
+            "JSX (*.jsx *.js);;TypeScript (*.ts)")[0]
         if file_path != '':
             self.open_path(file_path)
 
@@ -1324,10 +1351,10 @@ class PythonWindow(QtWidgets.QMainWindow):
         if pane is None:
             return False
 
-        if pane.language == "python":
-            file_filter = "Python (*.py)"
-        else:
-            file_filter = "JSX (*.jsx *.js)"
+        file_filter = {
+            "python": "Python (*.py)",
+            "ts": "TypeScript (*.ts)",
+        }.get(pane.language, "JSX (*.jsx *.js)")
         file_path = QtWidgets.QFileDialog.getSaveFileName(
             self, "Save Script File", self.__default_dir(), file_filter)[0]
         if file_path == '':
@@ -1547,6 +1574,13 @@ class PythonWindow(QtWidgets.QMainWindow):
     def __run_code(self, code, language="python"):
         # auto-save on execute: code is never lost even if AE goes down
         self.__save_session()
+
+        if language == "ts":
+            code = self.__compile_typescript(code)
+            if code is None:
+                return
+            language = "jsx"
+
         try:
             if language == "jsx":
                 ret = ae.executeScript(code)
@@ -1557,6 +1591,23 @@ class PythonWindow(QtWidgets.QMainWindow):
         except:
             import traceback
             traceback.print_exc()
+
+    def __compile_typescript(self, code):
+        """Transpile TypeScript to ExtendScript-compatible JavaScript (ES5)."""
+        try:
+            import dukpy
+        except ImportError:
+            sys.stderr.write(
+                "TypeScript execution requires the 'dukpy' package.\n"
+                "Install it into the AEPython Python with: python -m pip install dukpy\n")
+            return None
+
+        try:
+            return dukpy.typescript_compile(code)
+        except:
+            import traceback
+            traceback.print_exc()
+            return None
 
     def __current_language(self):
         pane = self.__current_pane()
@@ -1588,8 +1639,13 @@ class PythonWindow(QtWidgets.QMainWindow):
                         self.__current_language())
 
     def __execute_jsx_file(self):
-        file_path = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Execute JSX File", "", "JSX (*.jsx *.js)")[0]
+        self.__execute_script_file("Execute JSX File", "JSX (*.jsx *.js)", "jsx")
+
+    def __execute_ts_file(self):
+        self.__execute_script_file("Execute TypeScript File", "TypeScript (*.ts)", "ts")
+
+    def __execute_script_file(self, title, file_filter, language):
+        file_path = QtWidgets.QFileDialog.getOpenFileName(self, title, "", file_filter)[0]
         if file_path == '':
             return
 
@@ -1600,7 +1656,7 @@ class PythonWindow(QtWidgets.QMainWindow):
             import traceback
             traceback.print_exc()
             return
-        self.__run_code(code, "jsx")
+        self.__run_code(code, language)
 
     def __execute_file(self):
         file_path = QtWidgets.QFileDialog.getOpenFileName(self, "Execute Python File", "", "Python (*.py)")[0]

@@ -30,9 +30,10 @@ MITライセンス（[LICENSE](./LICENSE) を参照）
 Window メニュー -> Python を選択
 
 Code 欄は PySide 製のコードエディターになっており、以下の機能を利用できます。
-* Python と JSX（ExtendScript）の両対応：タブごとに言語を持ち、.jsx / .js を開くと自動判定。File -> New JSX Tab（Ctrl+Shift+N）で JSX タブを作成し、同じショートカットでそのまま実行（結果は Output に表示）。File -> Execute JSX File で .jsx ファイルを直接実行
+* Python / JSX（ExtendScript）/ TypeScript 対応：タブごとに言語を持ち、.jsx / .js / .ts を開くと自動判定。File -> New JSX Tab（Ctrl+Shift+N）・New TypeScript Tab（Ctrl+Alt+N）でタブを作成し、同じショートカットでそのまま実行（結果は Output に表示）。File -> Execute JSX File / Execute TypeScript File でファイルを直接実行
+* TypeScript は実行時に [dukpy](https://pypi.org/project/dukpy/) 同梱の TypeScript コンパイラで ExtendScript 互換の JavaScript (ES5) にトランスパイルしてから実行（class・enum・アロー関数・テンプレートリテラル等が使用可能。import / export のモジュール機能は非対応）
 * マルチドキュメントタブ（並べ替え・Ctrl+W で閉じる・Ctrl+Tab でタブ切り替え）
-* Python / JSX シンタックスハイライト（コメントトグルやオートインデントも言語に応じて動作）
+* Python / JSX / TypeScript シンタックスハイライト（コメントトグルやオートインデントも言語に応じて動作）
 * 行番号表示・現在行ハイライト・インデントガイド
 * 対応括弧のハイライト・カーソル下の単語と同じ単語のハイライト
 * 括弧・クォートの自動補完
