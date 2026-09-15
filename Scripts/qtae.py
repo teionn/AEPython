@@ -5,6 +5,14 @@ import ast
 import json
 import textwrap
 
+# When the scripts are installed in a folder that is itself named "AEPython"
+# (e.g. .../Scripts/AEPython/), "import AEPython" can resolve to that folder
+# as a namespace package instead of AEPython.py. Putting this script's own
+# folder on sys.path makes the real module win.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if getattr(sys.modules.get("AEPython"), "__file__", None) is None:
+    sys.modules.pop("AEPython", None)
+
 from PySide2 import QtCore, QtGui, QtWidgets
 
 import _AEPython as _ae
