@@ -1595,7 +1595,9 @@ class PythonWindow(QtWidgets.QMainWindow):
                 if ret is not None:
                     print(ret)
             else:
-                exec(code, globals(), _ae.locals)
+                # one namespace for globals and locals: top-level defs stay
+                # visible from inside functions (recursion, classes, ...)
+                exec(code, _ae.locals)
         except:
             import traceback
             traceback.print_exc()
